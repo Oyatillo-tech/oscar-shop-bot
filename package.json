@@ -2,9 +2,12 @@
   "name": "oscar-shop-bot",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": { "start": "node index.js" },
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
-    "node-telegram-bot-api": "^0.64.0",
-    "dotenv": "^16.0.0"
+    "dotenv": "^16.0.0",
+    "firebase-admin": "^13.10.0",
+    "node-telegram-bot-api": "^0.64.0"
   }
 }
