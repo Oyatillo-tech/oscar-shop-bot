@@ -24,13 +24,19 @@ try {
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// /start — chatId saqlash + telefon so'rash
+// /start — chatId saqlash + telefon so'rash (agar yo'q bo'lsa)
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from.first_name || "Mehmon";
 
+  let existingPhone = null;
+
   if (db) {
     try {
+      const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
+      if (userDoc.exists) {
+        existingPhone = userDoc.data().phone || null;
+      }
       await db.collection("telegram_users").doc(String(chatId)).set({
         chatId: chatId,
         firstName,
@@ -44,6 +50,28 @@ bot.onText(/\/start/, async (msg) => {
     }
   }
 
+  // Telefon allaqachon saqlangan bo'lsa — do'konni ko'rsatish
+  if (existingPhone) {
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "🛍 Do'konga kirish", web_app: { url: MINI_APP_URL } },
+        ]],
+      },
+    };
+    bot.sendMessage(chatId,
+      `👋 Xush kelibsiz, ${firstName}!\n\n` +
+      `🛒 OSCAR do'koniga xush kelibsiz!\n\n` +
+      `✅ Sifatli bo'yoq va qurilish materiallari\n` +
+      `🚚 Toshkent bo'ylab yetkazib berish\n` +
+      `💳 Naqt va karta orqali to'lov\n\n` +
+      `Xarid qilish uchun quyidagi tugmani bosing 👇`,
+      keyboard
+    );
+    return;
+  }
+
+  // Yangi foydalanuvchi — telefon so'rash
   const message =
     `👋 Xush kelibsiz, ${firstName}!\n\n` +
     `🛒 OSCAR do'koniga xush kelibsiz!\n\n` +
