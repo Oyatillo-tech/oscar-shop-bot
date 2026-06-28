@@ -4,7 +4,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const admin = require("firebase-admin");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8929579134:AAFZC2OLU8APbkHgRUAIy91pEilvoS-kvT4";
-const MINI_APP_URL = process.env.MINI_APP_URL || "https://your-netlify-link.netlify.app";
+const MINI_APP_URL = process.env.MINI_APP_URL || "https://oscar1-wheat.vercel.app/";
 
 // Firebase sozlash
 let db;
@@ -217,8 +217,8 @@ if (db) {
           try {
             const notifData = {
               title: status === "confirmed" ? "✅ Buyurtma tasdiqlandi" :
-                    status === "cancelled" ? "❌ Buyurtma bekor qilindi" :
-                    status === "on_the_way" ? "🚚 Buyurtma yo'lda" :
+                status === "cancelled" ? "❌ Buyurtma bekor qilindi" :
+                  status === "on_the_way" ? "🚚 Buyurtma yo'lda" :
                     "🎉 Buyurtma yetib keldi",
               message: message,
               type: "order_status",
