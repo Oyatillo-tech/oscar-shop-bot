@@ -24,7 +24,12 @@ try {
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// /start — chatId saqlash + telefon so'rash (agar yo'q bo'lsa)
+// WebApp URL ni startapp bilan qaytarish
+function getWebAppUrl(chatId) {
+  return `${MINI_APP_URL}?startapp=${chatId}`;
+}
+
+// /start — chatId saqlash + telefon so'rash
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from.first_name || "Mehmon";
@@ -50,12 +55,14 @@ bot.onText(/\/start/, async (msg) => {
     }
   }
 
+  const webAppUrl = getWebAppUrl(chatId);
+
   // Telefon allaqachon saqlangan bo'lsa — do'konni ko'rsatish
   if (existingPhone) {
     const keyboard = {
       reply_markup: {
         inline_keyboard: [[
-          { text: "🛍 Do'konga kirish", web_app: { url: MINI_APP_URL } },
+          { text: "🛍 Do'konga kirish", web_app: { url: webAppUrl } },
         ]],
       },
     };
@@ -110,10 +117,11 @@ bot.on("contact", async (msg) => {
     }
   }
 
+  const webAppUrl = getWebAppUrl(chatId);
   const keyboard = {
     reply_markup: {
       inline_keyboard: [[
-        { text: "🛍 Do'konga kirish", web_app: { url: MINI_APP_URL } },
+        { text: "🛍 Do'konga kirish", web_app: { url: webAppUrl } },
       ]],
     },
   };
@@ -131,10 +139,11 @@ bot.on("message", (msg) => {
   if (text && text.startsWith("/start")) return;
   if (msg.contact) return;
 
+  const webAppUrl = getWebAppUrl(chatId);
   const keyboard = {
     reply_markup: {
       inline_keyboard: [[
-        { text: "🛍 Do'konga kirish", web_app: { url: MINI_APP_URL } },
+        { text: "🛍 Do'konga kirish", web_app: { url: webAppUrl } },
       ]],
     },
   };
