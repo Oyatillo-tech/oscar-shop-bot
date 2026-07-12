@@ -196,7 +196,7 @@ bot.onText(/🆘 Yordam/, (msg) => {
 // ====================== "PROFIL" ======================
 bot.onText(/👤 Profil/, async (msg) => {
   const chatId = msg.chat.id;
-  if (!db) return;
+  if (!db) { bot.sendMessage(chatId, "❌ Vaqtincha ma'lumot olib bo'lmadi."); return; }
   try {
     const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
     const data = userDoc.exists ? userDoc.data() : {};
@@ -213,6 +213,7 @@ bot.onText(/👤 Profil/, async (msg) => {
     }
   } catch (error) {
     console.error("Profil olishda xato:", error.message);
+    bot.sendMessage(chatId, "❌ Profilni olishda xato yuz berdi. Birozdan keyin qayta urinib ko'ring.");
   }
 });
 
