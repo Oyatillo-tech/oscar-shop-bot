@@ -5,6 +5,7 @@ const admin = require("firebase-admin");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const MINI_APP_URL = process.env.MINI_APP_URL || "https://oscar1-wheat.vercel.app/";
+const SUPPORT_GROUP_ID = process.env.SUPPORT_GROUP_ID; // masalan: -1001234567890
 
 let db;
 
@@ -24,9 +25,28 @@ try {
 // ====================== BOT ======================
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// WebApp URL
+// Har bir mijoz uchun vaqtinchalik holat (masalan "yordam so'rovi yozyapti")
+// Bu RAM'da saqlanadi — server qayta ishga tushsa tozalanadi, bu muammo emas.
+const userState = {};
+
 function getWebAppUrl(chatId) {
   return `${MINI_APP_URL}?startapp=${chatId}`;
+}
+
+// Doimiy asosiy menyu
+const mainMenuKeyboard = {
+  reply_markup: {
+    keyboard: [
+      ["🛍 Do'konga kirish"],
+      ["📦 Buyurtmalarim", "🆘 Yordam"],
+      ["👤 Profil"],
+    ],
+    resize_keyboard: true,
+  },
+};
+
+function sendMainMenu(chatId, greetingText) {
+  bot.sendMessage(chatId, greetingText, mainMenuKeyboard);
 }
 
 // ====================== /START ======================
@@ -35,17 +55,16 @@ bot.onText(/\/start/, async (msg) => {
   const firstName = msg.from.first_name || "Mehmon";
 
   let hasPhone = false;
+  let phoneAsked = false;
 
   if (db) {
     try {
       const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
-
       if (userDoc.exists) {
         const data = userDoc.data();
         hasPhone = !!data.phone;
+        phoneAsked = !!data.phoneAsked;
       }
-
-      // Ma'lumotni saqlash / yangilash
       await db.collection("telegram_users").doc(String(chatId)).set({
         chatId: chatId,
         firstName: firstName,
@@ -54,39 +73,33 @@ bot.onText(/\/start/, async (msg) => {
         startedAt: admin.firestore.Timestamp.now(),
         updatedAt: admin.firestore.Timestamp.now(),
       }, { merge: true });
-
-      console.log(`✅ User saqlandi/yangilandi: ${chatId} | Telefon bor: ${hasPhone}`);
     } catch (error) {
       console.error("Firestore xato:", error.message);
     }
   }
 
-  const webAppUrl = getWebAppUrl(chatId);
-
-  if (hasPhone) {
-    // Telefon allaqachon bor — darhol do'konni ko'rsat
-    bot.sendMessage(chatId, 
-      `👋 Xush kelibsiz, ${firstName}!\n\n🛒 OSCAR do'koniga xush kelibsiz!`, 
-      {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: "🛍 Do'konga kirish", web_app: { url: webAppUrl } }
-          ]]
-        }
-      }
-    );
+  if (hasPhone || phoneAsked) {
+    // Telefon bor, YOKI oldin so'ralgan va o'tkazib yuborilgan — qayta bezovta qilinmaydi
+    sendMainMenu(chatId, `👋 Xush kelibsiz, ${firstName}!\n\n🛒 OSCAR do'koniga xush kelibsiz!`);
   } else {
-    // Yangi foydalanuvchi — telefon so'ra
     bot.sendMessage(chatId,
-      `👋 Xush kelibsiz, ${firstName}!\n\n📱 Buyurtma holati haqida xabar olish uchun telefon raqamingizni ulashing:`,
+      `👋 Xush kelibsiz, ${firstName}!\n\n📱 Buyurtma holati haqida xabar olib turishingiz uchun telefon raqamingizni ulashishingizni tavsiya qilamiz:`,
       {
         reply_markup: {
-          keyboard: [[{ text: "📱 Telefon raqamni ulashish", request_contact: true }]],
+          keyboard: [
+            [{ text: "📱 Telefon raqamni ulashish", request_contact: true }],
+            ["⏭ Keyinroq"],
+          ],
           resize_keyboard: true,
           one_time_keyboard: true,
         }
       }
     );
+    if (db) {
+      db.collection("telegram_users").doc(String(chatId))
+        .set({ phoneAsked: true }, { merge: true })
+        .catch(err => console.error("phoneAsked saqlash xato:", err.message));
+    }
   }
 });
 
@@ -108,32 +121,136 @@ bot.on("contact", async (msg) => {
     }
   }
 
-  const webAppUrl = getWebAppUrl(chatId);
+  sendMainMenu(chatId, `✅ Rahmat! Telefon raqamingiz saqlandi.\n\nEndi buyurtma holatini kuzatib borishingiz mumkin!`);
+});
 
-  bot.sendMessage(chatId,
-    `✅ Rahmat! Telefon raqamingiz saqlandi.\n\nEndi buyurtma holatini kuzatib borishingiz mumkin!`,
-    {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: "🛍 Do'konga kirish", web_app: { url: webAppUrl } }
-        ]]
-      }
+// ====================== "KEYINROQ" BOSILGANDA ======================
+bot.onText(/⏭ Keyinroq/, (msg) => {
+  const chatId = msg.chat.id;
+  sendMainMenu(chatId, "Xo'p, istasangiz keyinroq \"👤 Profil\" bo'limidan telefon qo'shishingiz mumkin.");
+});
+
+// ====================== "DO'KONGA KIRISH" ======================
+bot.onText(/🛍 Do'konga kirish/, (msg) => {
+  const chatId = msg.chat.id;
+  const webAppUrl = getWebAppUrl(chatId);
+  bot.sendMessage(chatId, "Do'konga kirish uchun quyidagi tugmani bosing 👇", {
+    reply_markup: {
+      inline_keyboard: [[{ text: "🛍 Do'konga kirish", web_app: { url: webAppUrl } }]]
     }
-  );
+  });
+});
+
+// ====================== "BUYURTMALARIM" ======================
+bot.onText(/📦 Buyurtmalarim/, async (msg) => {
+  const chatId = msg.chat.id;
+  if (!db) { bot.sendMessage(chatId, "❌ Vaqtincha ma'lumot olib bo'lmadi."); return; }
+
+  try {
+    const snapshot = await db.collection("orders")
+      .where("telegramChatId", "==", chatId)
+      .orderBy("createdAt", "desc")
+      .get();
+
+    if (snapshot.empty) {
+      bot.sendMessage(chatId, "Sizda hali buyurtmalar yo'q. 🛍 Do'konga kirib, birinchi buyurtmangizni bering!");
+      return;
+    }
+
+    const statusLabels = {
+      pending: "🕓 Kutilmoqda",
+      confirmed: "✅ Tasdiqlandi",
+      cancelled: "❌ Bekor qilindi",
+      on_the_way: "🚚 Yo'lda",
+      delivered: "🎉 Yetkazildi",
+    };
+
+    let text = `📦 Sizning buyurtmalaringiz (${snapshot.size} ta):\n\n`;
+    snapshot.docs.forEach((doc, i) => {
+      const o = doc.data();
+      const label = statusLabels[o.status] || o.status || "Noma'lum";
+      const date = o.createdAt && o.createdAt.toDate
+        ? o.createdAt.toDate().toLocaleString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
+        : "—";
+      const total = o.total ? `${Number(o.total).toLocaleString("uz-UZ")} so'm` : "—";
+      text += `${i + 1}. 🆔 ${doc.id.substring(0, 8)}...\n   ${label}\n   🗓 ${date}\n   💰 ${total}\n\n`;
+    });
+
+    // Telegram xabar 4096 belgidan oshsa bo'linadi
+    const chunks = text.match(/[\s\S]{1,3800}/g) || [text];
+    for (const chunk of chunks) {
+      await bot.sendMessage(chatId, chunk);
+    }
+  } catch (error) {
+    console.error("Buyurtmalarni olishda xato:", error.message);
+    bot.sendMessage(chatId, "❌ Buyurtmalarni olishda xato yuz berdi. Birozdan keyin qayta urinib ko'ring.");
+  }
+});
+
+// ====================== "YORDAM" ======================
+bot.onText(/🆘 Yordam/, (msg) => {
+  const chatId = msg.chat.id;
+  userState[chatId] = { step: "awaiting_support_message" };
+  bot.sendMessage(chatId, "✍️ Savolingizni yoki muammoingizni yozing — operatorlarimiz tez orada javob berishadi.");
+});
+
+// ====================== "PROFIL" ======================
+bot.onText(/👤 Profil/, async (msg) => {
+  const chatId = msg.chat.id;
+  if (!db) return;
+  try {
+    const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
+    const data = userDoc.exists ? userDoc.data() : {};
+    if (data.phone) {
+      bot.sendMessage(chatId, `👤 Profilingiz:\n\n📱 Telefon: ${data.phone}`);
+    } else {
+      bot.sendMessage(chatId, "👤 Sizda hali telefon raqami saqlanmagan.", {
+        reply_markup: {
+          keyboard: [[{ text: "📱 Telefon raqamni ulashish", request_contact: true }]],
+          resize_keyboard: true,
+          one_time_keyboard: true,
+        }
+      });
+    }
+  } catch (error) {
+    console.error("Profil olishda xato:", error.message);
+  }
 });
 
 // ====================== BOSHQA XABARLAR ======================
-bot.on("message", (msg) => {
-  if (msg.text?.startsWith("/start") || msg.contact) return;
-
+bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
-  const webAppUrl = getWebAppUrl(chatId);
+  const text = msg.text;
 
+  if (!text || msg.contact) return;
+  if (text.startsWith("/start")) return;
+  if (["🛍 Do'konga kirish", "📦 Buyurtmalarim", "🆘 Yordam", "👤 Profil", "⏭ Keyinroq"].includes(text)) return;
+
+  // Agar mijoz "Yordam" bosgandan keyin xabar yozayotgan bo'lsa — guruhga forward qilamiz
+  const state = userState[chatId];
+  if (state && state.step === "awaiting_support_message") {
+    delete userState[chatId];
+
+    if (SUPPORT_GROUP_ID) {
+      const userInfo = `🆘 Yangi murojaat\n\n👤 ${msg.from.first_name || ""} ${msg.from.last_name || ""}\n` +
+        `🔗 @${msg.from.username || "username yo'q"}\n🆔 Chat ID: ${chatId}\n\n💬 Xabar:\n${text}`;
+      try {
+        await bot.sendMessage(SUPPORT_GROUP_ID, userInfo);
+        bot.sendMessage(chatId, "✅ Xabaringiz operatorlarga yuborildi. Tez orada javob berishadi!", mainMenuKeyboard);
+      } catch (error) {
+        console.error("Guruhga yuborishda xato:", error.message);
+        bot.sendMessage(chatId, "❌ Xabar yuborishda xato. Birozdan keyin qayta urinib ko'ring.", mainMenuKeyboard);
+      }
+    } else {
+      bot.sendMessage(chatId, "⚠️ Yordam bo'limi hozircha sozlanmagan. Iltimos keyinroq urinib ko'ring.", mainMenuKeyboard);
+    }
+    return;
+  }
+
+  const webAppUrl = getWebAppUrl(chatId);
   bot.sendMessage(chatId, "Do'konga kirish uchun quyidagi tugmani bosing 👇", {
     reply_markup: {
-      inline_keyboard: [[
-        { text: "🛍 Do'konga kirish", web_app: { url: webAppUrl } }
-      ]]
+      inline_keyboard: [[{ text: "🛍 Do'konga kirish", web_app: { url: webAppUrl } }]]
     }
   });
 });
@@ -153,7 +270,6 @@ if (db) {
 
         let chatId = orderData.telegramChatId;
 
-        // Telefon bo'yicha qidirish
         if (!chatId && orderData.customerPhone) {
           try {
             const usersSnap = await db.collection("telegram_users").get();
@@ -171,8 +287,8 @@ if (db) {
         if (!chatId) return;
 
         let message = "";
-        if (status === "confirmed") message = `✅ Buyurtmangiz tasdiqlandi! 🆔 ${orderId.substring(0,8)}...`;
-        else if (status === "cancelled") message = `❌ Buyurtmangiz bekor qilindi. 🆔 ${orderId.substring(0,8)}...`;
+        if (status === "confirmed") message = `✅ Buyurtmangiz tasdiqlandi! 🆔 ${orderId.substring(0, 8)}...`;
+        else if (status === "cancelled") message = `❌ Buyurtmangiz bekor qilindi. 🆔 ${orderId.substring(0, 8)}...`;
         else if (status === "on_the_way") message = `🚚 Buyurtmangiz yo'lga chiqdi! 📦`;
         else if (status === "delivered") message = `🎉 Buyurtmangiz yetkazildi! Rahmat! ❤️`;
 
