@@ -172,8 +172,7 @@ bot.onText(/📦 Buyurtmalarim/, async (msg) => {
       const date = o.createdAt && o.createdAt.toDate
         ? o.createdAt.toDate().toLocaleString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
         : "—";
-      const total = o.total ? `${Number(o.total).toLocaleString("uz-UZ")} so'm` : "—";
-      text += `${i + 1}. 🆔 ${doc.id.substring(0, 8)}...\n   ${label}\n   🗓 ${date}\n   💰 ${total}\n\n`;
+      const total = o.totalUZS ? `${Number(o.totalUZS).toLocaleString("uz-UZ")} so'm` : "—"; text += `${i + 1}. 🆔 ${doc.id.substring(0, 8)}...\n   ${label}\n   🗓 ${date}\n   💰 ${total}\n\n`;
     });
 
     // Telegram xabar 4096 belgidan oshsa bo'linadi
