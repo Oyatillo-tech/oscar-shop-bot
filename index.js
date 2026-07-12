@@ -60,19 +60,23 @@ bot.onText(/\/start/, async (msg) => {
   if (db) {
     try {
       const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
-      if (userDoc.exists) {
-        const data = userDoc.data();
-        hasPhone = !!data.phone;
-        phoneAsked = !!data.phoneAsked;
-      }
-      await db.collection("telegram_users").doc(String(chatId)).set({
-        chatId: chatId,
-        firstName: firstName,
-        lastName: msg.from.last_name || "",
-        username: msg.from.username || "",
-        startedAt: admin.firestore.Timestamp.now(),
-        updatedAt: admin.firestore.Timestamp.now(),
-      }, { merge: true });
+let shouldAskPhone = true;
+
+if (userDoc.exists) {
+  const data = userDoc.data();
+  if (data.phone || data.phoneAsked === true) {
+    shouldAskPhone = false;
+  }
+}
+     await db.collection("telegram_users").doc(String(chatId)).set({
+  chatId: chatId,
+  firstName: firstName,
+  lastName: msg.from.last_name || "",
+  username: msg.from.username || "",
+  phoneAsked: true, // ⬅️ DOIM TRUE QILING!
+  startedAt: admin.firestore.FieldValue.serverTimestamp(),
+  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+}, { merge: true });
     } catch (error) {
       console.error("Firestore xato:", error.message);
     }
