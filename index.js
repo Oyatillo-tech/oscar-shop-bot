@@ -145,50 +145,50 @@ bot.onText(/🛍 Do'konga kirish/, (msg) => {
   });
 });
 
-// ====================== "BUYURTMALARIM" ======================
-bot.onText(/📦 Buyurtmalarim/, async (msg) => {
-  const chatId = msg.chat.id;
-  if (!db) { bot.sendMessage(chatId, "❌ Vaqtincha ma'lumot olib bo'lmadi."); return; }
+// // ====================== "BUYURTMALARIM" ======================
+// bot.onText(/📦 Buyurtmalarim/, async (msg) => {
+//   const chatId = msg.chat.id;
+//   if (!db) { bot.sendMessage(chatId, "❌ Vaqtincha ma'lumot olib bo'lmadi."); return; }
 
-  try {
-    const snapshot = await db.collection("orders")
-      .where("telegramChatId", "==", chatId)
-      .orderBy("createdAt", "desc")
-      .get();
+//   try {
+//     const snapshot = await db.collection("orders")
+//       .where("telegramChatId", "==", chatId)
+//       .orderBy("createdAt", "desc")
+//       .get();
 
-    if (snapshot.empty) {
-      bot.sendMessage(chatId, "Sizda hali buyurtmalar yo'q. 🛍 Do'konga kirib, birinchi buyurtmangizni bering!");
-      return;
-    }
+//     if (snapshot.empty) {
+//       bot.sendMessage(chatId, "Sizda hali buyurtmalar yo'q. 🛍 Do'konga kirib, birinchi buyurtmangizni bering!");
+//       return;
+//     }
 
-    const statusLabels = {
-      pending: "🕓 Kutilmoqda",
-      confirmed: "✅ Tasdiqlandi",
-      cancelled: "❌ Bekor qilindi",
-      on_the_way: "🚚 Yo'lda",
-      delivered: "🎉 Yetkazildi",
-    };
+//     const statusLabels = {
+//       pending: "🕓 Kutilmoqda",
+//       confirmed: "✅ Tasdiqlandi",
+//       cancelled: "❌ Bekor qilindi",
+//       on_the_way: "🚚 Yo'lda",
+//       delivered: "🎉 Yetkazildi",
+//     };
 
-    let text = `📦 Sizning buyurtmalaringiz (${snapshot.size} ta):\n\n`;
-    snapshot.docs.forEach((doc, i) => {
-      const o = doc.data();
-      const label = statusLabels[o.status] || o.status || "Noma'lum";
-      const date = o.createdAt && o.createdAt.toDate
-        ? o.createdAt.toDate().toLocaleString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
-        : "—";
-      const total = o.totalUZS ? `${Number(o.totalUZS).toLocaleString("uz-UZ")} so'm` : "—"; text += `${i + 1}. 🆔 ${doc.id.substring(0, 8)}...\n   ${label}\n   🗓 ${date}\n   💰 ${total}\n\n`;
-    });
+//     let text = `📦 Sizning buyurtmalaringiz (${snapshot.size} ta):\n\n`;
+//     snapshot.docs.forEach((doc, i) => {
+//       const o = doc.data();
+//       const label = statusLabels[o.status] || o.status || "Noma'lum";
+//       const date = o.createdAt && o.createdAt.toDate
+//         ? o.createdAt.toDate().toLocaleString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
+//         : "—";
+//       const total = o.totalUZS ? `${Number(o.totalUZS).toLocaleString("uz-UZ")} so'm` : "—"; text += `${i + 1}. 🆔 ${doc.id.substring(0, 8)}...\n   ${label}\n   🗓 ${date}\n   💰 ${total}\n\n`;
+//     });
 
-    // Telegram xabar 4096 belgidan oshsa bo'linadi
-    const chunks = text.match(/[\s\S]{1,3800}/g) || [text];
-    for (const chunk of chunks) {
-      await bot.sendMessage(chatId, chunk);
-    }
-  } catch (error) {
-    console.error("Buyurtmalarni olishda xato:", error.message);
-    bot.sendMessage(chatId, "❌ Buyurtmalarni olishda xato yuz berdi. Birozdan keyin qayta urinib ko'ring.");
-  }
-});
+//     // Telegram xabar 4096 belgidan oshsa bo'linadi
+//     const chunks = text.match(/[\s\S]{1,3800}/g) || [text];
+//     for (const chunk of chunks) {
+//       await bot.sendMessage(chatId, chunk);
+//     }
+//   } catch (error) {
+//     console.error("Buyurtmalarni olishda xato:", error.message);
+//     bot.sendMessage(chatId, "❌ Buyurtmalarni olishda xato yuz berdi. Birozdan keyin qayta urinib ko'ring.");
+//   }
+// });
 
 // ====================== "YORDAM" ======================
 bot.onText(/🆘 Yordam/, (msg) => {
@@ -197,29 +197,29 @@ bot.onText(/🆘 Yordam/, (msg) => {
   bot.sendMessage(chatId, "✍️ Savolingizni yoki muammoingizni yozing — operatorlarimiz tez orada javob berishadi.");
 });
 
-// ====================== "PROFIL" ======================
-bot.onText(/👤 Profil/, async (msg) => {
-  const chatId = msg.chat.id;
-  if (!db) { bot.sendMessage(chatId, "❌ Vaqtincha ma'lumot olib bo'lmadi."); return; }
-  try {
-    const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
-    const data = userDoc.exists ? userDoc.data() : {};
-    if (data.phone) {
-      bot.sendMessage(chatId, `👤 Profilingiz:\n\n📱 Telefon: ${data.phone}`);
-    } else {
-      bot.sendMessage(chatId, "👤 Sizda hali telefon raqami saqlanmagan.", {
-        reply_markup: {
-          keyboard: [[{ text: "📱 Telefon raqamni ulashish", request_contact: true }]],
-          resize_keyboard: true,
-          one_time_keyboard: true,
-        }
-      });
-    }
-  } catch (error) {
-    console.error("Profil olishda xato:", error.message);
-    bot.sendMessage(chatId, "❌ Profilni olishda xato yuz berdi. Birozdan keyin qayta urinib ko'ring.");
-  }
-});
+// // ====================== "PROFIL" ======================
+// bot.onText(/👤 Profil/, async (msg) => {
+//   const chatId = msg.chat.id;
+//   if (!db) { bot.sendMessage(chatId, "❌ Vaqtincha ma'lumot olib bo'lmadi."); return; }
+//   try {
+//     const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
+//     const data = userDoc.exists ? userDoc.data() : {};
+//     if (data.phone) {
+//       bot.sendMessage(chatId, `👤 Profilingiz:\n\n📱 Telefon: ${data.phone}`);
+//     } else {
+//       bot.sendMessage(chatId, "👤 Sizda hali telefon raqami saqlanmagan.", {
+//         reply_markup: {
+//           keyboard: [[{ text: "📱 Telefon raqamni ulashish", request_contact: true }]],
+//           resize_keyboard: true,
+//           one_time_keyboard: true,
+//         }
+//       });
+//     }
+//   } catch (error) {
+//     console.error("Profil olishda xato:", error.message);
+//     bot.sendMessage(chatId, "❌ Profilni olishda xato yuz berdi. Birozdan keyin qayta urinib ko'ring.");
+//   }
+// });
 
 // ====================== BOSHQA XABARLAR ======================
 bot.on("message", async (msg) => {
