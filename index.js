@@ -38,8 +38,7 @@ const mainMenuKeyboard = {
   reply_markup: {
     keyboard: [
       ["🛍 Do'konga kirish"],
-      ["📦 Buyurtmalarim", "🆘 Yordam"],
-      ["👤 Profil"],
+      ["🆘 Yordam"],
     ],
     resize_keyboard: true,
   },
