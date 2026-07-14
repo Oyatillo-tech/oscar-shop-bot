@@ -45,7 +45,7 @@ bot.on("polling_error", (err) => {
 });
 
 const userState = {};
-const supportThreads = {};   // ← QO'SHILDI: {guruhdagi_xabar_id: mijoz_chatId}
+const supportThreads = {}; // ⬅️ BU YO'Q EDI — asosiy crash sababi
 
 function getWebAppUrl(chatId) {
   // Eslatma: web_app tugmasida ?startapp ishlamaydi, shuning uchun oddiy
@@ -75,20 +75,30 @@ bot.onText(/\/start/, async (msg) => {
 
   if (db) {
     try {
-      const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
+      const ref = db.collection("telegram_users").doc(String(chatId));
+      const userDoc = await ref.get();
+
       if (userDoc.exists) {
         const data = userDoc.data();
-        hasPhone = !!data.phone;
-        phoneAsked = !!data.phoneAsked;
+        hasPhone = !!data.phone;          // ⬅️ endi real qiymat o'qiladi
+        phoneAsked = data.phoneAsked === true;
       }
-      await db.collection("telegram_users").doc(String(chatId)).set({
-        chatId: chatId,
-        firstName: firstName,
+
+      // User ma'lumotini saqlash/yangilash.
+      // MUHIM: phoneAsked bu yerda YOZILMAYDI — faqat telefon so'ralganda yoziladi.
+      // startedAt faqat birinchi marta yoziladi (har /start da yangilanmasin).
+      const payload = {
+        chatId: String(chatId),
+        firstName,
         lastName: msg.from.last_name || "",
         username: msg.from.username || "",
-        startedAt: admin.firestore.Timestamp.now(),
-        updatedAt: admin.firestore.Timestamp.now(),
-      }, { merge: true });
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (!userDoc.exists) {
+        payload.startedAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+      await ref.set(payload, { merge: true });
+      console.log(`✅ User saqlandi: ${chatId} | phone: ${hasPhone}`);
     } catch (error) {
       console.error("Firestore xato:", error.message);
     }
@@ -180,24 +190,6 @@ bot.onText(/🆘 Yordam/, (msg) => {
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
-
-  if (SUPPORT_GROUP_ID && String(chatId) === String(SUPPORT_GROUP_ID)) {
-    if (msg.reply_to_message && text) {
-      const customerChatId = supportMessageMap[msg.reply_to_message.message_id];
-      if (customerChatId) {
-        try {
-          await bot.sendMessage(customerChatId, `💬 Operator javobi:\n\n${text}`);
-          await bot.sendMessage(SUPPORT_GROUP_ID, `✅ Javob mijozga yuborildi.`, { reply_to_message_id: msg.message_id });
-        } catch (error) {
-          console.error("Mijozga javob yuborishda xato:", error.message);
-          await bot.sendMessage(SUPPORT_GROUP_ID, `❌ Mijozga yuborib bo'lmadi: ${error.message}`, { reply_to_message_id: msg.message_id });
-        }
-      } else {
-        await bot.sendMessage(SUPPORT_GROUP_ID, `⚠️ Bu xabar qaysi mijozga tegishli ekanini topa olmadim (ehtimol bot qayta ishga tushirilgan). Iltimos mijozning Chat ID'siga qarab qo'lda yozing.`, { reply_to_message_id: msg.message_id });
-      }
-    }
-    return;
-  }
 
   // --- Support guruhdan operator javobi ---
   if (SUPPORT_GROUP_ID && String(chatId) === String(SUPPORT_GROUP_ID)) {
@@ -306,8 +298,9 @@ if (db) {
 
         if (message) {
           try {
+            // ⬅️ TUZATILDI: oldin bu yerda userInfo (mavjud emas) SUPPORT_GROUP ga yuborilardi
             await bot.sendMessage(chatId, message);
-            console.log(`✅ Xabar yuborildi: ${chatId} - ${status}`);
+            console.log(`✅ Status xabari yuborildi: ${chatId} - ${status}`);
           } catch (e) {
             console.error(`Xabar yuborishda xato: ${e.message}`);
           }
