@@ -28,6 +28,7 @@ const bot = new TelegramBot(TOKEN, { polling: true });
 // Har bir mijoz uchun vaqtinchalik holat (masalan "yordam so'rovi yozyapti")
 // Bu RAM'da saqlanadi — server qayta ishga tushsa tozalanadi, bu muammo emas.
 const userState = {};
+const supportThreads = {};   // ← QO'SHILDI: {guruhdagi_xabar_id: mijoz_chatId}
 
 function getWebAppUrl(chatId) {
   return `${MINI_APP_URL}?startapp=${chatId}`;
@@ -121,6 +122,23 @@ bot.on("contact", async (msg) => {
   }
 
   sendMainMenu(chatId, `✅ Rahmat! Telefon raqamingiz saqlandi.\n\nEndi buyurtma holatini kuzatib borishingiz mumkin!`);
+});
+
+// ====================== GURUHDAN JAVOB KELGANDA ======================
+bot.on("message", (msg) => {
+  if (String(msg.chat.id) !== String(SUPPORT_GROUP_ID)) return;
+  if (!msg.reply_to_message || !msg.text) return;
+
+  const originalMsgId = msg.reply_to_message.message_id;
+  const customerChatId = supportThreads[originalMsgId];
+  if (!customerChatId) return;
+
+  bot.sendMessage(customerChatId, `💬 Operatordan javob:\n\n${msg.text}`)
+    .then(() => bot.sendMessage(SUPPORT_GROUP_ID, "✅ Mijozga yuborildi", { reply_to_message_id: msg.message_id }))
+    .catch((err) => {
+      console.error("Mijozga javob yuborishda xato:", err.message);
+      bot.sendMessage(SUPPORT_GROUP_ID, "❌ Yuborib bo'lmadi (mijoz botni bloklagan bo'lishi mumkin)", { reply_to_message_id: msg.message_id });
+    });
 });
 
 // ====================== "KEYINROQ" BOSILGANDA ======================
@@ -234,7 +252,8 @@ bot.on("message", async (msg) => {
       const userInfo = `🆘 Yangi murojaat\n\n👤 ${msg.from.first_name || ""} ${msg.from.last_name || ""}\n` +
         `🔗 @${msg.from.username || "username yo'q"}\n🆔 Chat ID: ${chatId}\n\n💬 Xabar:\n${text}`;
       try {
-        await bot.sendMessage(SUPPORT_GROUP_ID, userInfo);
+        const sentMsg = await bot.sendMessage(SUPPORT_GROUP_ID, userInfo);
+        supportThreads[sentMsg.message_id] = chatId;   // ← QO'SHILDI
         bot.sendMessage(chatId, "✅ Xabaringiz operatorlarga yuborildi. Tez orada javob berishadi!", mainMenuKeyboard);
       } catch (error) {
         console.error("Guruhga yuborishda xato:", error.message);
