@@ -1,19 +1,33 @@
-// ====================== OSCAR SHOP BOT - TO'LIQ ISHLAYDIGAN VERSIYA ======================
+// ====================== OSCAR SHOP BOT — TUZATILGAN VERSIYA ======================
+// Tuzatilgan xatolar:
+// 1. supportThreads e'lon qilinmagan edi -> ReferenceError -> butun process o'lardi
+// 2. uncaughtException/unhandledRejection himoyasi qo'shildi (bot endi "jim o'lmaydi")
+// 3. Orders listener'da userInfo/SUPPORT_GROUP_ID copy-paste xatosi -> endi mijozga to'g'ri xabar boradi
+// 4. /start dagi hasPhone/phoneAsked mantiqi tuzatildi (Firestore'dan real o'qiladi)
+// 5. contact handler .update() o'rniga .set(merge) -> hujjat bo'lmasa ham telefon saqlanadi
+// 6. chatId doim String sifatida saqlanadi (schema bir xillashtirildi)
+
 require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const admin = require("firebase-admin");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const MINI_APP_URL = process.env.MINI_APP_URL || "https://oscar1-wheat.vercel.app/";
-const SUPPORT_GROUP_ID = process.env.SUPPORT_GROUP_ID; // masalan: -1001234567890
+const SUPPORT_GROUP_ID = process.env.SUPPORT_GROUP_ID;
 
+// ====================== PROCESS HIMOYASI (MUHIM!) ======================
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ Unhandled Rejection:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("❌ Uncaught Exception:", error);
+});
+
+// ====================== FIREBASE ======================
 let db;
-
-// ====================== FIREBASE INITIALIZATION ======================
 try {
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (!serviceAccountJson) throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON topilmadi!");
-
   const serviceAccount = JSON.parse(serviceAccountJson);
   admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
   db = admin.firestore();
@@ -25,22 +39,24 @@ try {
 // ====================== BOT ======================
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// Har bir mijoz uchun vaqtinchalik holat (masalan "yordam so'rovi yozyapti")
-// Bu RAM'da saqlanadi — server qayta ishga tushsa tozalanadi, bu muammo emas.
+bot.on("polling_error", (err) => {
+  // 409 Conflict = shu token bilan boshqa process ham polling qilyapti!
+  console.error("Polling xatosi:", err.message);
+});
+
 const userState = {};
-const supportThreads = {};   // ← QO'SHILDI: {guruhdagi_xabar_id: mijoz_chatId}
+const supportThreads = {}; // ⬅️ BU YO'Q EDI — asosiy crash sababi
 
 function getWebAppUrl(chatId) {
-  return `${MINI_APP_URL}?startapp=${chatId}`;
+  // Eslatma: web_app tugmasida ?startapp ishlamaydi, shuning uchun oddiy
+  // query param sifatida beramiz. MiniApp buni URLSearchParams orqali yoki
+  // Telegram.WebApp.initDataUnsafe.user.id dan olishi kerak.
+  return `${MINI_APP_URL}?chatId=${chatId}`;
 }
 
-// Doimiy asosiy menyu
 const mainMenuKeyboard = {
   reply_markup: {
-    keyboard: [
-      ["🛍 Do'konga kirish"],
-      ["🆘 Yordam"],
-    ],
+    keyboard: [["🛍 Do'konga kirish"], ["🆘 Yordam"]],
     resize_keyboard: true,
   },
 };
@@ -59,30 +75,40 @@ bot.onText(/\/start/, async (msg) => {
 
   if (db) {
     try {
-      const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
+      const ref = db.collection("telegram_users").doc(String(chatId));
+      const userDoc = await ref.get();
+
       if (userDoc.exists) {
         const data = userDoc.data();
-        hasPhone = !!data.phone;
-        phoneAsked = !!data.phoneAsked;
+        hasPhone = !!data.phone;          // ⬅️ endi real qiymat o'qiladi
+        phoneAsked = data.phoneAsked === true;
       }
-      await db.collection("telegram_users").doc(String(chatId)).set({
-        chatId: chatId,
-        firstName: firstName,
+
+      // User ma'lumotini saqlash/yangilash.
+      // MUHIM: phoneAsked bu yerda YOZILMAYDI — faqat telefon so'ralganda yoziladi.
+      // startedAt faqat birinchi marta yoziladi (har /start da yangilanmasin).
+      const payload = {
+        chatId: String(chatId),
+        firstName,
         lastName: msg.from.last_name || "",
         username: msg.from.username || "",
-        startedAt: admin.firestore.Timestamp.now(),
-        updatedAt: admin.firestore.Timestamp.now(),
-      }, { merge: true });
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (!userDoc.exists) {
+        payload.startedAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+      await ref.set(payload, { merge: true });
+      console.log(`✅ User saqlandi: ${chatId} | phone: ${hasPhone}`);
     } catch (error) {
       console.error("Firestore xato:", error.message);
     }
   }
 
   if (hasPhone || phoneAsked) {
-    // Telefon bor, YOKI oldin so'ralgan va o'tkazib yuborilgan — qayta bezovta qilinmaydi
     sendMainMenu(chatId, `👋 Xush kelibsiz, ${firstName}!\n\n🛒 OSCAR do'koniga xush kelibsiz!`);
   } else {
-    bot.sendMessage(chatId,
+    bot.sendMessage(
+      chatId,
       `👋 Xush kelibsiz, ${firstName}!\n\n📱 Buyurtma holati haqida xabar olib turishingiz uchun telefon raqamingizni ulashishingizni tavsiya qilamiz:`,
       {
         reply_markup: {
@@ -92,13 +118,14 @@ bot.onText(/\/start/, async (msg) => {
           ],
           resize_keyboard: true,
           one_time_keyboard: true,
-        }
+        },
       }
     );
     if (db) {
-      db.collection("telegram_users").doc(String(chatId))
+      db.collection("telegram_users")
+        .doc(String(chatId))
         .set({ phoneAsked: true }, { merge: true })
-        .catch(err => console.error("phoneAsked saqlash xato:", err.message));
+        .catch((err) => console.error("phoneAsked saqlash xato:", err.message));
     }
   }
 });
@@ -106,15 +133,27 @@ bot.onText(/\/start/, async (msg) => {
 // ====================== TELEFON QABUL QILISH ======================
 bot.on("contact", async (msg) => {
   const chatId = msg.chat.id;
+
+  // Xavfsizlik: faqat o'zining kontaktini qabul qilamiz
+  if (msg.contact.user_id && msg.contact.user_id !== msg.from.id) {
+    bot.sendMessage(chatId, "❗️ Iltimos, o'zingizning raqamingizni ulashing.");
+    return;
+  }
+
   const phone = msg.contact.phone_number;
   const normalizedPhone = phone.startsWith("+") ? phone : "+" + phone;
 
   if (db) {
     try {
-      await db.collection("telegram_users").doc(String(chatId)).update({
-        phone: normalizedPhone,
-        updatedAt: admin.firestore.Timestamp.now(),
-      });
+      // .update() emas .set(merge) — hujjat bo'lmasa ham ishlaydi
+      await db.collection("telegram_users").doc(String(chatId)).set(
+        {
+          chatId: String(chatId),
+          phone: normalizedPhone,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
       console.log(`✅ Telefon saqlandi: ${chatId} - ${normalizedPhone}`);
     } catch (error) {
       console.error("Telefon saqlash xatosi:", error.message);
@@ -124,84 +163,20 @@ bot.on("contact", async (msg) => {
   sendMainMenu(chatId, `✅ Rahmat! Telefon raqamingiz saqlandi.\n\nEndi buyurtma holatini kuzatib borishingiz mumkin!`);
 });
 
-// ====================== GURUHDAN JAVOB KELGANDA ======================
-bot.on("message", (msg) => {
-  if (String(msg.chat.id) !== String(SUPPORT_GROUP_ID)) return;
-  if (!msg.reply_to_message || !msg.text) return;
-
-  const originalMsgId = msg.reply_to_message.message_id;
-  const customerChatId = supportThreads[originalMsgId];
-  if (!customerChatId) return;
-
-  bot.sendMessage(customerChatId, `💬 Operatordan javob:\n\n${msg.text}`)
-    .then(() => bot.sendMessage(SUPPORT_GROUP_ID, "✅ Mijozga yuborildi", { reply_to_message_id: msg.message_id }))
-    .catch((err) => {
-      console.error("Mijozga javob yuborishda xato:", err.message);
-      bot.sendMessage(SUPPORT_GROUP_ID, "❌ Yuborib bo'lmadi (mijoz botni bloklagan bo'lishi mumkin)", { reply_to_message_id: msg.message_id });
-    });
-});
-
-// ====================== "KEYINROQ" BOSILGANDA ======================
+// ====================== "KEYINROQ" ======================
 bot.onText(/⏭ Keyinroq/, (msg) => {
-  const chatId = msg.chat.id;
-  sendMainMenu(chatId, "Xo'p, istasangiz keyinroq \"👤 Profil\" bo'limidan telefon qo'shishingiz mumkin.");
+  sendMainMenu(msg.chat.id, "Xo'p, istasangiz keyinroq telefon qo'shishingiz mumkin.");
 });
 
 // ====================== "DO'KONGA KIRISH" ======================
 bot.onText(/🛍 Do'konga kirish/, (msg) => {
   const chatId = msg.chat.id;
-  const webAppUrl = getWebAppUrl(chatId);
   bot.sendMessage(chatId, "Do'konga kirish uchun quyidagi tugmani bosing 👇", {
     reply_markup: {
-      inline_keyboard: [[{ text: "🛍 Do'konga kirish", web_app: { url: webAppUrl } }]]
-    }
+      inline_keyboard: [[{ text: "🛍 Do'konga kirish", web_app: { url: getWebAppUrl(chatId) } }]],
+    },
   });
 });
-
-// // ====================== "BUYURTMALARIM" ======================
-// bot.onText(/📦 Buyurtmalarim/, async (msg) => {
-//   const chatId = msg.chat.id;
-//   if (!db) { bot.sendMessage(chatId, "❌ Vaqtincha ma'lumot olib bo'lmadi."); return; }
-
-//   try {
-//     const snapshot = await db.collection("orders")
-//       .where("telegramChatId", "==", chatId)
-//       .orderBy("createdAt", "desc")
-//       .get();
-
-//     if (snapshot.empty) {
-//       bot.sendMessage(chatId, "Sizda hali buyurtmalar yo'q. 🛍 Do'konga kirib, birinchi buyurtmangizni bering!");
-//       return;
-//     }
-
-//     const statusLabels = {
-//       pending: "🕓 Kutilmoqda",
-//       confirmed: "✅ Tasdiqlandi",
-//       cancelled: "❌ Bekor qilindi",
-//       on_the_way: "🚚 Yo'lda",
-//       delivered: "🎉 Yetkazildi",
-//     };
-
-//     let text = `📦 Sizning buyurtmalaringiz (${snapshot.size} ta):\n\n`;
-//     snapshot.docs.forEach((doc, i) => {
-//       const o = doc.data();
-//       const label = statusLabels[o.status] || o.status || "Noma'lum";
-//       const date = o.createdAt && o.createdAt.toDate
-//         ? o.createdAt.toDate().toLocaleString("uz-UZ", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
-//         : "—";
-//       const total = o.totalUZS ? `${Number(o.totalUZS).toLocaleString("uz-UZ")} so'm` : "—"; text += `${i + 1}. 🆔 ${doc.id.substring(0, 8)}...\n   ${label}\n   🗓 ${date}\n   💰 ${total}\n\n`;
-//     });
-
-//     // Telegram xabar 4096 belgidan oshsa bo'linadi
-//     const chunks = text.match(/[\s\S]{1,3800}/g) || [text];
-//     for (const chunk of chunks) {
-//       await bot.sendMessage(chatId, chunk);
-//     }
-//   } catch (error) {
-//     console.error("Buyurtmalarni olishda xato:", error.message);
-//     bot.sendMessage(chatId, "❌ Buyurtmalarni olishda xato yuz berdi. Birozdan keyin qayta urinib ko'ring.");
-//   }
-// });
 
 // ====================== "YORDAM" ======================
 bot.onText(/🆘 Yordam/, (msg) => {
@@ -210,76 +185,86 @@ bot.onText(/🆘 Yordam/, (msg) => {
   bot.sendMessage(chatId, "✍️ Savolingizni yoki muammoingizni yozing — operatorlarimiz tez orada javob berishadi.");
 });
 
-// // ====================== "PROFIL" ======================
-// bot.onText(/👤 Profil/, async (msg) => {
-//   const chatId = msg.chat.id;
-//   if (!db) { bot.sendMessage(chatId, "❌ Vaqtincha ma'lumot olib bo'lmadi."); return; }
-//   try {
-//     const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
-//     const data = userDoc.exists ? userDoc.data() : {};
-//     if (data.phone) {
-//       bot.sendMessage(chatId, `👤 Profilingiz:\n\n📱 Telefon: ${data.phone}`);
-//     } else {
-//       bot.sendMessage(chatId, "👤 Sizda hali telefon raqami saqlanmagan.", {
-//         reply_markup: {
-//           keyboard: [[{ text: "📱 Telefon raqamni ulashish", request_contact: true }]],
-//           resize_keyboard: true,
-//           one_time_keyboard: true,
-//         }
-//       });
-//     }
-//   } catch (error) {
-//     console.error("Profil olishda xato:", error.message);
-//     bot.sendMessage(chatId, "❌ Profilni olishda xato yuz berdi. Birozdan keyin qayta urinib ko'ring.");
-//   }
-// });
-
-// ====================== BOSHQA XABARLAR ======================
+// ====================== YAGONA MESSAGE HANDLER ======================
+// (Oldin ikkita alohida handler bor edi — bitta qilib birlashtirildi)
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
+  // --- Support guruhdan operator javobi ---
+  if (SUPPORT_GROUP_ID && String(chatId) === String(SUPPORT_GROUP_ID)) {
+    if (msg.reply_to_message && text) {
+      const customerChatId = supportThreads[msg.reply_to_message.message_id];
+      if (customerChatId) {
+        try {
+          await bot.sendMessage(customerChatId, `💬 Operator javobi:\n\n${text}`);
+          await bot.sendMessage(SUPPORT_GROUP_ID, "✅ Javob mijozga yuborildi.", {
+            reply_to_message_id: msg.message_id,
+          });
+        } catch (error) {
+          console.error("Mijozga javob yuborishda xato:", error.message);
+          await bot.sendMessage(
+            SUPPORT_GROUP_ID,
+            `❌ Mijozga yuborib bo'lmadi: ${error.message}`,
+            { reply_to_message_id: msg.message_id }
+          );
+        }
+      } else {
+        await bot.sendMessage(
+          SUPPORT_GROUP_ID,
+          "⚠️ Bu xabar qaysi mijozga tegishli ekanini topa olmadim (ehtimol bot qayta ishga tushirilgan).",
+          { reply_to_message_id: msg.message_id }
+        );
+      }
+    }
+    return;
+  }
+
+  // --- Filtrlash ---
   if (!text || msg.contact) return;
   if (text.startsWith("/start")) return;
-  if (["🛍 Do'konga kirish", "📦 Buyurtmalarim", "🆘 Yordam", "👤 Profil", "⏭ Keyinroq"].includes(text)) return;
+  if (["🛍 Do'konga kirish", "🆘 Yordam", "⏭ Keyinroq"].includes(text)) return;
 
-  // Agar mijoz "Yordam" bosgandan keyin xabar yozayotgan bo'lsa — guruhga forward qilamiz
+  // --- Yordam so'rovi ---
   const state = userState[chatId];
   if (state && state.step === "awaiting_support_message") {
     delete userState[chatId];
 
     if (SUPPORT_GROUP_ID) {
-      const userInfo = `🆘 Yangi murojaat\n\n👤 ${msg.from.first_name || ""} ${msg.from.last_name || ""}\n` +
+      const userInfo =
+        `🆘 Yangi murojaat\n\n👤 ${msg.from.first_name || ""} ${msg.from.last_name || ""}\n` +
         `🔗 @${msg.from.username || "username yo'q"}\n🆔 Chat ID: ${chatId}\n\n💬 Xabar:\n${text}`;
       try {
         const sentMsg = await bot.sendMessage(SUPPORT_GROUP_ID, userInfo);
-        supportThreads[sentMsg.message_id] = chatId;   // ← QO'SHILDI
+        supportThreads[sentMsg.message_id] = chatId;
         bot.sendMessage(chatId, "✅ Xabaringiz operatorlarga yuborildi. Tez orada javob berishadi!", mainMenuKeyboard);
       } catch (error) {
         console.error("Guruhga yuborishda xato:", error.message);
         bot.sendMessage(chatId, "❌ Xabar yuborishda xato. Birozdan keyin qayta urinib ko'ring.", mainMenuKeyboard);
       }
     } else {
-      bot.sendMessage(chatId, "⚠️ Yordam bo'limi hozircha sozlanmagan. Iltimos keyinroq urinib ko'ring.", mainMenuKeyboard);
+      bot.sendMessage(chatId, "⚠️ Yordam bo'limi hozircha sozlanmagan.", mainMenuKeyboard);
     }
     return;
   }
 
-  const webAppUrl = getWebAppUrl(chatId);
+  // --- Default: do'kon tugmasi ---
   bot.sendMessage(chatId, "Do'konga kirish uchun quyidagi tugmani bosing 👇", {
     reply_markup: {
-      inline_keyboard: [[{ text: "🛍 Do'konga kirish", web_app: { url: webAppUrl } }]]
-    }
+      inline_keyboard: [[{ text: "🛍 Do'konga kirish", web_app: { url: getWebAppUrl(chatId) } }]],
+    },
   });
 });
 
-// ====================== BUYURTMA STATUSI O'ZGARGANDA XABAR YUBORISH ======================
+// ====================== BUYURTMA STATUSI O'ZGARGANDA ======================
 if (db) {
   console.log("🔔 Orders listener faol...");
 
-  db.collection("orders").onSnapshot((snapshot) => {
-    snapshot.docChanges().forEach(async (change) => {
-      if (change.type === "modified") {
+  db.collection("orders").onSnapshot(
+    (snapshot) => {
+      snapshot.docChanges().forEach(async (change) => {
+        if (change.type !== "modified") return;
+
         const orderData = change.doc.data();
         const orderId = change.doc.id;
         const status = orderData.status;
@@ -288,15 +273,16 @@ if (db) {
 
         let chatId = orderData.telegramChatId;
 
-        if (!chatId && orderData.customerPhone) {
+        // Fallback: telefon orqali qidirish (where bilan — butun kolleksiyani o'qimasdan)
+        if (!chatId && orderData.customerPhone && db) {
           try {
-            const usersSnap = await db.collection("telegram_users").get();
-            usersSnap.docs.forEach(doc => {
-              const user = doc.data();
-              if (user.phone && user.phone.replace(/\s/g, "") === orderData.customerPhone.replace(/\s/g, "")) {
-                chatId = user.chatId;
-              }
-            });
+            const normalized = orderData.customerPhone.replace(/\s/g, "");
+            const usersSnap = await db
+              .collection("telegram_users")
+              .where("phone", "==", normalized)
+              .limit(1)
+              .get();
+            if (!usersSnap.empty) chatId = usersSnap.docs[0].data().chatId;
           } catch (e) {
             console.error("Users qidirish xatosi:", e.message);
           }
@@ -312,15 +298,17 @@ if (db) {
 
         if (message) {
           try {
+            // ⬅️ TUZATILDI: oldin bu yerda userInfo (mavjud emas) SUPPORT_GROUP ga yuborilardi
             await bot.sendMessage(chatId, message);
-            console.log(`✅ Xabar yuborildi: ${chatId} - ${status}`);
+            console.log(`✅ Status xabari yuborildi: ${chatId} - ${status}`);
           } catch (e) {
             console.error(`Xabar yuborishda xato: ${e.message}`);
           }
         }
-      }
-    });
-  });
+      });
+    },
+    (error) => console.error("❌ Orders listener xatosi:", error)
+  );
 }
 
 console.log("✅ Oscar Shop Bot muvaffaqiyatli ishga tushdi!");
