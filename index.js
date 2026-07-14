@@ -28,8 +28,7 @@ const bot = new TelegramBot(TOKEN, { polling: true });
 // Har bir mijoz uchun vaqtinchalik holat (masalan "yordam so'rovi yozyapti")
 // Bu RAM'da saqlanadi — server qayta ishga tushsa tozalanadi, bu muammo emas.
 const userState = {};
-const supportThreads = {};   // ← QO'SHILDI: {guruhdagi_xabar_id: mijoz_chatId}
-
+const supportMessageMap = {};
 function getWebAppUrl(chatId) {
   return `${MINI_APP_URL}?startapp=${chatId}`;
 }
@@ -60,19 +59,23 @@ bot.onText(/\/start/, async (msg) => {
   if (db) {
     try {
       const userDoc = await db.collection("telegram_users").doc(String(chatId)).get();
-      if (userDoc.exists) {
-        const data = userDoc.data();
-        hasPhone = !!data.phone;
-        phoneAsked = !!data.phoneAsked;
-      }
-      await db.collection("telegram_users").doc(String(chatId)).set({
-        chatId: chatId,
-        firstName: firstName,
-        lastName: msg.from.last_name || "",
-        username: msg.from.username || "",
-        startedAt: admin.firestore.Timestamp.now(),
-        updatedAt: admin.firestore.Timestamp.now(),
-      }, { merge: true });
+let shouldAskPhone = true;
+
+if (userDoc.exists) {
+  const data = userDoc.data();
+  if (data.phone || data.phoneAsked === true) {
+    shouldAskPhone = false;
+  }
+}
+     await db.collection("telegram_users").doc(String(chatId)).set({
+  chatId: chatId,
+  firstName: firstName,
+  lastName: msg.from.last_name || "",
+  username: msg.from.username || "",
+  phoneAsked: true, // ⬅️ DOIM TRUE QILING!
+  startedAt: admin.firestore.FieldValue.serverTimestamp(),
+  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+}, { merge: true });
     } catch (error) {
       console.error("Firestore xato:", error.message);
     }
@@ -239,6 +242,24 @@ bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
+  if (SUPPORT_GROUP_ID && String(chatId) === String(SUPPORT_GROUP_ID)) {
+    if (msg.reply_to_message && text) {
+      const customerChatId = supportMessageMap[msg.reply_to_message.message_id];
+      if (customerChatId) {
+        try {
+          await bot.sendMessage(customerChatId, `💬 Operator javobi:\n\n${text}`);
+          await bot.sendMessage(SUPPORT_GROUP_ID, `✅ Javob mijozga yuborildi.`, { reply_to_message_id: msg.message_id });
+        } catch (error) {
+          console.error("Mijozga javob yuborishda xato:", error.message);
+          await bot.sendMessage(SUPPORT_GROUP_ID, `❌ Mijozga yuborib bo'lmadi: ${error.message}`, { reply_to_message_id: msg.message_id });
+        }
+      } else {
+        await bot.sendMessage(SUPPORT_GROUP_ID, `⚠️ Bu xabar qaysi mijozga tegishli ekanini topa olmadim (ehtimol bot qayta ishga tushirilgan). Iltimos mijozning Chat ID'siga qarab qo'lda yozing.`, { reply_to_message_id: msg.message_id });
+      }
+    }
+    return;
+  }
+
   if (!text || msg.contact) return;
   if (text.startsWith("/start")) return;
   if (["🛍 Do'konga kirish", "📦 Buyurtmalarim", "🆘 Yordam", "👤 Profil", "⏭ Keyinroq"].includes(text)) return;
@@ -311,10 +332,11 @@ if (db) {
         else if (status === "delivered") message = `🎉 Buyurtmangiz yetkazildi! Rahmat! ❤️`;
 
         if (message) {
-          try {
-            await bot.sendMessage(chatId, message);
-            console.log(`✅ Xabar yuborildi: ${chatId} - ${status}`);
-          } catch (e) {
+           try {
+        const sentMsg = await bot.sendMessage(SUPPORT_GROUP_ID, userInfo);
+        supportMessageMap[sentMsg.message_id] = chatId;
+        bot.sendMessage(chatId, "✅ Xabaringiz operatorlarga yuborildi. Tez orada javob berishadi!", mainMenuKeyboard);
+      }catch (e) {
             console.error(`Xabar yuborishda xato: ${e.message}`);
           }
         }
