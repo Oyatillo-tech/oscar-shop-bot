@@ -14,6 +14,7 @@ const admin = require("firebase-admin");
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const MINI_APP_URL = process.env.MINI_APP_URL || "https://oscar1-wheat.vercel.app/";
 const SUPPORT_GROUP_ID = process.env.SUPPORT_GROUP_ID;
+const PAYMENTS_GROUP_ID = process.env.PAYMENTS_GROUP_ID || SUPPORT_GROUP_ID;
 
 // ====================== PROCESS HIMOYASI (MUHIM!) ======================
 process.on("unhandledRejection", (reason) => {
@@ -184,6 +185,74 @@ bot.onText(/🆘 Yordam/, (msg) => {
   userState[chatId] = { step: "awaiting_support_message" };
   bot.sendMessage(chatId, "✍️ Savolingizni yoki muammoingizni yozing — operatorlarimiz tez orada javob berishadi.");
 });
+
+
+// ====================== TO'LOV CHEKI (RASM) QABUL QILISH ======================
+bot.on("photo", async (msg) => {
+  const chatId = msg.chat.id;
+  if (!db) return;
+
+  if (SUPPORT_GROUP_ID && String(chatId) === String(SUPPORT_GROUP_ID)) return;
+  if (PAYMENTS_GROUP_ID && String(chatId) === String(PAYMENTS_GROUP_ID)) return;
+
+  const photos = msg.photo;
+  const bestPhoto = photos[photos.length - 1];
+  const fileId = bestPhoto.file_id;
+
+  try {
+    const snapshot = await db.collection("orders")
+      .where("telegramChatId", "==", chatId)
+      .orderBy("createdAt", "desc")
+      .limit(10)
+      .get();
+
+    const target = snapshot.docs.find((doc) => {
+      const o = doc.data();
+      return o.paymentMethod === "card" && !o.receiptSubmitted;
+    });
+
+    if (target) {
+      await target.ref.update({
+        receiptSubmitted: true,
+        receiptFileId: fileId,
+        receiptSubmittedAt: admin.firestore.Timestamp.now(),
+      });
+
+      const o = target.data();
+      const total = o.totalUZS ? `${Number(o.totalUZS).toLocaleString("uz-UZ")} so'm` : "—";
+      const caption =
+        `🧾 YANGI TO'LOV CHEKI\n\n` +
+        `🆔 Buyurtma: ${target.id}\n` +
+        `👤 Mijoz: ${o.customerName || o.username || "Noma'lum"}\n` +
+        `📞 Telefon: ${o.customerPhone || "Noma'lum"}\n` +
+        `💰 Summa: ${total}\n` +
+        `🆔 Chat ID: ${chatId}`;
+
+      if (PAYMENTS_GROUP_ID) {
+        await bot.sendPhoto(PAYMENTS_GROUP_ID, fileId, { caption });
+      }
+
+      bot.sendMessage(chatId, "✅ To'lov cheki qabul qilindi! Tez orada tekshirib, buyurtmangizni jo'natishni boshlaymiz.");
+    } else {
+      const caption =
+        `⚠️ TO'LOV CHEKI (mos buyurtma avtomatik topilmadi)\n\n` +
+        `🆔 Chat ID: ${chatId}\n` +
+        `👤 ${msg.from.first_name || ""} ${msg.from.last_name || ""}\n` +
+        `🔗 @${msg.from.username || "username yo'q"}`;
+
+      if (PAYMENTS_GROUP_ID) {
+        await bot.sendPhoto(PAYMENTS_GROUP_ID, fileId, { caption });
+      }
+
+      bot.sendMessage(chatId, "✅ Chekingiz qabul qilindi. Operatorlarimiz tez orada buyurtmangiz bilan bog'lab, tasdiqlashadi.");
+    }
+  } catch (error) {
+    console.error("Chekni qayta ishlashda xato:", error.message);
+    bot.sendMessage(chatId, "❌ Chekni qabul qilishda xato yuz berdi. Birozdan keyin qayta urinib ko'ring yoki \"🆘 Yordam\" orqali murojaat qiling.");
+  }
+});
+
+// ====================== BOSHQA XABARLAR ======================
 
 // ====================== YAGONA MESSAGE HANDLER ======================
 // (Oldin ikkita alohida handler bor edi — bitta qilib birlashtirildi)
